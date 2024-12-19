@@ -8,6 +8,7 @@ import {
   TouchableOpacity,
   TextInput,
   Alert,
+  Platform,
 } from 'react-native';
 import * as LocalAuthentication from 'expo-local-authentication';
 
@@ -27,38 +28,90 @@ function AuthScreen({ navigation }) {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [availableMethods, setAvailableMethods] = useState([]);
+  const [enrolledLevel, setEnrolledLevel] = useState(null);
 
   useEffect(() => {
     checkAuthenticationMethods();
   }, []);
 
+  const logAuthenticationTypes = (methods) => {
+    const authTypes = {
+      [LocalAuthentication.AuthenticationType.FINGERPRINT]:
+        'FINGERPRINT',
+      [LocalAuthentication.AuthenticationType.FACIAL_RECOGNITION]:
+        'FACIAL_RECOGNITION',
+      [LocalAuthentication.AuthenticationType.IRIS]: 'IRIS',
+    };
+
+    console.log('\n=== Authentication Methods Available ===');
+    methods.forEach((method) => {
+      console.log(`- ${authTypes[method]} (${method})`);
+    });
+    console.log('=====================================\n');
+  };
+
   const checkAuthenticationMethods = async () => {
     try {
+      console.log(
+        `\n[${Platform.OS.toUpperCase()}] Starting authentication check...`
+      );
+
       const hasHardware =
         await LocalAuthentication.hasHardwareAsync();
+      console.log('Has Authentication Hardware:', hasHardware);
+
       if (!hasHardware) {
+        console.log(
+          'No authentication hardware available, falling back to password'
+        );
         setAuthMethod('password');
+        return;
+      }
+
+      const isEnrolled = await LocalAuthentication.isEnrolledAsync();
+      console.log('Has Enrolled Authentication Data:', isEnrolled);
+
+      if (!isEnrolled) {
+        console.log('No enrolled authentication data found');
+        setAuthMethod('password');
+        setError(
+          'No biometric/face data enrolled. Please set up in device settings.'
+        );
         return;
       }
 
       const methods =
         await LocalAuthentication.supportedAuthenticationTypesAsync();
+      console.log('Supported Authentication Types:', methods);
+      logAuthenticationTypes(methods);
       setAvailableMethods(methods);
 
-      if (
-        methods.includes(
-          LocalAuthentication.AuthenticationType.FINGERPRINT
-        ) ||
-        methods.includes(
-          LocalAuthentication.AuthenticationType.FACIAL_RECOGNITION
-        )
-      ) {
+      const level = await LocalAuthentication.getEnrolledLevelAsync();
+      console.log('Enrolled Security Level:', level);
+      setEnrolledLevel(level);
+
+      const hasFaceId = methods.includes(
+        LocalAuthentication.AuthenticationType.FACIAL_RECOGNITION
+      );
+      const hasFingerprint = methods.includes(
+        LocalAuthentication.AuthenticationType.FINGERPRINT
+      );
+
+      console.log('Authentication Capabilities:');
+      console.log('- Face Recognition Available:', hasFaceId);
+      console.log('- Fingerprint Available:', hasFingerprint);
+
+      if (hasFaceId || hasFingerprint) {
+        console.log('Setting auth method to biometric');
         setAuthMethod('biometric');
       } else {
+        console.log(
+          'No biometric methods available, falling back to password'
+        );
         setAuthMethod('password');
       }
     } catch (err) {
-      console.error('Error checking auth methods:', err);
+      console.error('Error during authentication check:', err);
       setAuthMethod('password');
     }
   };
@@ -66,7 +119,7 @@ function AuthScreen({ navigation }) {
   const handleAuthentication = async () => {
     setError('');
     if (authMethod === 'password') {
-      // Simple password validation - in real app, this should be more secure
+      console.log('Using password authentication');
       if (password === '123456') {
         navigation.replace('Home');
       } else {
@@ -76,39 +129,142 @@ function AuthScreen({ navigation }) {
     }
 
     try {
-      const result = await LocalAuthentication.authenticateAsync({
-        promptMessage: 'Authenticate to proceed',
-        fallbackLabel: 'Use password instead',
-        disableDeviceFallback: false,
-        cancelLabel: 'Cancel',
-      });
+      console.log(
+        `\n[${Platform.OS.toUpperCase()}] Starting biometric authentication...`
+      );
 
-      if (result.success) {
-        navigation.replace('Home');
-      } else if (result.error === 'user_cancel') {
-        setAuthMethod('password');
+      if (Platform.OS === 'ios') {
+        const supportedTypes =
+          await LocalAuthentication.supportedAuthenticationTypesAsync();
+        const hasFaceId = supportedTypes.includes(
+          LocalAuthentication.AuthenticationType.FACIAL_RECOGNITION
+        );
+
+        console.log('iOS Authentication Setup:');
+        console.log('- Has Face ID Support:', hasFaceId);
+        console.log('- Available Methods:', supportedTypes);
+        logAuthenticationTypes(supportedTypes);
+
+        const authConfig = {
+          promptMessage: 'Authenticate to proceed',
+          fallbackLabel: 'Use password instead',
+          disableDeviceFallback: false,
+          cancelLabel: 'Cancel',
+          prefersFacialAuthentication: hasFaceId,
+          requireAuthentication: true,
+          fallbackToPinCodeAction: true,
+        };
+
+        console.log('iOS Auth Config:', authConfig);
+        const result = await LocalAuthentication.authenticateAsync(
+          authConfig
+        );
+        console.log('iOS Auth Result:', result);
+        handleAuthResult(result);
       } else {
-        handleAuthenticationError(result.error);
+        console.log('Android Authentication Setup:');
+        console.log('- Available Methods:', availableMethods);
+        logAuthenticationTypes(availableMethods);
+
+        const hasFaceAuth = availableMethods.includes(
+          LocalAuthentication.AuthenticationType.FACIAL_RECOGNITION
+        );
+
+        const authConfig = {
+          promptMessage: 'Authenticate to proceed',
+          fallbackLabel: 'Use password instead',
+          disableDeviceFallback: false,
+          cancelLabel: 'Cancel',
+          requireConfirmation: true,
+          foregroundColor: '#007AFF',
+          security:
+            LocalAuthentication.SecurityLevel.BIOMETRIC_STRONG,
+          allowDeviceCredentials: true,
+        };
+
+        console.log('Android Auth Config:', authConfig);
+
+        if (hasFaceAuth) {
+          try {
+            console.log('Attempting Face Authentication first...');
+            const faceResult =
+              await LocalAuthentication.authenticateAsync({
+                ...authConfig,
+                promptMessage: 'Authenticate with Face Recognition',
+                authenticationType:
+                  LocalAuthentication.AuthenticationType
+                    .FACIAL_RECOGNITION,
+              });
+
+            if (faceResult.success) {
+              console.log('Face Authentication successful');
+              handleAuthResult(faceResult);
+              return;
+            }
+          } catch (faceError) {
+            console.log(
+              'Face Authentication failed, falling back to fingerprint:',
+              faceError
+            );
+          }
+        }
+
+        const result = await LocalAuthentication.authenticateAsync(
+          authConfig
+        );
+        console.log('Android Auth Result:', result);
+        handleAuthResult(result);
       }
     } catch (error) {
+      console.error('Authentication error:', error);
       handleAuthenticationError(error);
     }
   };
 
+  const handleAuthResult = (result) => {
+    console.log('\nHandling Authentication Result:');
+    console.log('- Success:', result.success);
+    console.log('- Error:', result.error);
+
+    if (result.success) {
+      console.log('Authentication successful, navigating to Home');
+      navigation.replace('Home');
+    } else if (result.error === 'user_cancel') {
+      console.log(
+        'User cancelled authentication, switching to password'
+      );
+      setAuthMethod('password');
+    } else {
+      console.log('Authentication failed, handling error');
+      handleAuthenticationError(result.error);
+    }
+  };
+
   const handleAuthenticationError = (error) => {
-    console.error('Authentication error:', error);
+    console.log('\nHandling Authentication Error:');
+    console.log('- Error Type:', error);
+
     let errorMessage = 'Authentication failed. Please try again.';
 
     if (error === 'not_enrolled') {
       errorMessage =
-        'No biometric/face data found. Please set up in device settings or use password.';
+        Platform.OS === 'ios'
+          ? 'Face ID is not set up on this device. Please set up Face ID in your iPhone settings or use password.'
+          : 'Biometric authentication is not set up on this device. Please set up in device settings or use password.';
+      console.log('Error: Not enrolled -', errorMessage);
       setAuthMethod('password');
     } else if (error === 'not_available') {
       errorMessage =
-        'Authentication hardware not available. Using password instead.';
+        Platform.OS === 'ios'
+          ? 'Face ID is not available on this device. Using password instead.'
+          : 'Biometric authentication is not available. Using password instead.';
+      console.log('Error: Not available -', errorMessage);
       setAuthMethod('password');
     } else if (error === 'lockout') {
-      errorMessage = 'Too many attempts. Please try again later.';
+      errorMessage =
+        'Too many failed attempts. Please try again later or use password.';
+      console.log('Error: Lockout -', errorMessage);
+      setAuthMethod('password');
     }
 
     Alert.alert('Authentication Error', errorMessage, [
@@ -121,6 +277,21 @@ function AuthScreen({ navigation }) {
       setAuthMethod('biometric');
       setError('');
     }
+  };
+
+  const getAuthButtonText = () => {
+    if (Platform.OS === 'ios') {
+      return availableMethods.includes(
+        LocalAuthentication.AuthenticationType.FACIAL_RECOGNITION
+      )
+        ? 'Use Face ID'
+        : 'Use Touch ID';
+    }
+    return availableMethods.includes(
+      LocalAuthentication.AuthenticationType.FACIAL_RECOGNITION
+    )
+      ? 'Use Face Authentication'
+      : 'Use Fingerprint';
   };
 
   return (
@@ -136,12 +307,7 @@ function AuthScreen({ navigation }) {
             onPress={handleAuthentication}
           >
             <Text style={styles.buttonText}>
-              {availableMethods.includes(
-                LocalAuthentication.AuthenticationType
-                  .FACIAL_RECOGNITION
-              )
-                ? 'Use Face Authentication'
-                : 'Use Biometric Authentication'}
+              {getAuthButtonText()}
             </Text>
           </TouchableOpacity>
           <TouchableOpacity
@@ -174,7 +340,9 @@ function AuthScreen({ navigation }) {
               onPress={retryBiometric}
             >
               <Text style={styles.secondaryButtonText}>
-                Try Biometric Again
+                {Platform.OS === 'ios'
+                  ? 'Try Face ID Again'
+                  : 'Try Biometric Again'}
               </Text>
             </TouchableOpacity>
           )}

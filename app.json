@@ -16,8 +16,10 @@
     ],
     "ios": {
       "supportsTablet": true,
+      "bundleIdentifier": "com.expo.localauthentication",
       "infoPlist": {
-        "NSFaceIDUsageDescription": "This app uses Face ID / Touch ID to provide secure authentication."
+        "NSFaceIDUsageDescription": "We need to use Face ID to securely authenticate you.",
+        "NSFaceIDUsageDescriptionKey": "We need to use Face ID to securely authenticate you."
       }
     },
     "android": {
