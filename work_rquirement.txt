@@ -1,0 +1,8 @@
+generate a expo sdk 52 project do not use expo-router use react navigation and setup expo-local-authentication
+It should be a simple project with a login screen and a home screen no need to focus on UI too much.
+Login screen will have bio metric authentication and face authentication for android and ios.
+If biometric authentication is not available, then use face authentication.
+If face authentication is not available, then use password authentication.
+Use proper error handling and retry logic if permission is not granted.
+Use proper configuration in app.json.
+documentation link for expo-local-authentication: https://docs.expo.dev/versions/latest/sdk/local-authentication/
